@@ -1,0 +1,19 @@
+---
+# requirements.yml ejemplo INSTALACION DE ROLES EXTERNOS
+
+- src: git@workstation.lab.example.com:student/bash_env
+  scm: git
+  version: dev
+  name: student.bash_env
+
+# from Ansible Galaxy, overriding the name and using a specific version
+- src: geerlingguy.redis
+  version: "1.5.0"
+  name: redis_prod
+
+# from a role tar ball, given a URL;
+#   supports 'http', 'https', or 'file' protocols
+- src: file:///opt/local/roles/tarrole.tar
+  name: tarrole
+- src: https://www.example.com/role-archive/someuser.otherrole.tar
+  name: someuser.otherrole
