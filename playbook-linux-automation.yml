@@ -1,0 +1,230 @@
+# INSTALACION DE PAQUETES CON DNF MODULE
+# --------------
+- name: Install httpd
+  ansible.builtin.dnf:
+    name: httpd
+    state: present
+#dnf install httpd
+
+- name: Install or upgrade httpd
+  ansible.builtin.dnf:
+    name: httpd
+    state: latest
+# dnf upgrade
+
+- name: Upgrade all packages
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+# dnf upgrade
+
+- name: Remove httpd
+  ansible.builtin.dnf:
+    name: httpd
+    state: absent
+# dnf remove httpd
+
+- name: Install Development Tools
+  ansible.builtin.dnf:
+    name: "@Development Tools"
+    state: present
+# dnf group install "Development Tools"
+
+- name: Install perl DNF module
+  ansible.builtin.dnf:
+    name: "@perl:5.26/minimal"
+    state: present
+# dnf module install perl:5.26/minimal
+
+- name: Install the packages
+  ansible.builtin.dnf:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - httpd
+    - mod_ssl
+    - httpd-tools
+# Instalar varios pkgs con loop
+
+# -------------------
+---
+- name: Display installed packages
+  hosts: servera.lab.example.com
+  gather_facts: false
+  tasks:
+    - name: Gather info on installed packages # Define el task con su modulo
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: List installed packages # Lista los paquetes instalados usando facts y debug
+      ansible.builtin.debug:
+        var: ansible_facts['packages']
+
+    - name: Display NetworkManager version
+      ansible.builtin.debug:
+        var: ansible_facts['packages']['NetworkManager'][0]['version'] # Muestra una fact especifica de un paquete
+      when: ansible_facts['packages']['NetworkManager'] is defined # Declara la condicion para el task, solo si existe
+# -------------------
+---
+- name: Install the required packages on the web servers
+  hosts: webservers
+  tasks:
+    - name: Install httpd
+      ansible.builtin.package: # Modulo package nos permite detectar automaticamente el manager de paquetes necesario segun la distribucion de linux
+        name: httpd
+        state: present
+
+#####################################
+# Registrar y administrar suscripciones de RedHat del sistema
+#####################################
+---
+- name: Register systems
+  hosts: all
+  become: true
+  tasks:
+    - name: Include the rhc role
+      ansible.builtin.include_role: # Declaracion de system_role incluido en la coleccion
+        name: redhat.rhel_system_roles.rhc
+
+# Archivo de variables para el rol
+---
+- rhc_state: present # Especifica si se registra el sistema
+- rhc_auth:
+  login:
+    username: yourusername
+    password: yourpassword
+- rhc_insights:
+    state: present # Habilita Redhat insights
+- rhc_repositories:
+    - name: rhel-9-for-x86_64-baseos-rpms
+      state: enabled
+    - name: rhel-9-for-x86_64-appstream-rpms
+      state: enabled
+
+#####################################
+# Declarar repositorios e instalar paquetes con GPG KEY y YUM
+#####################################
+- name: Configure the company YUM/DNF repositories # Configurar repositorios RPM con YUM
+  hosts: servera.lab.example.com
+  tasks:
+    - name: Deploy the GPG public key
+      ansible.builtin.rpm_key: # Modulo que nos permite desplegar la llave publica al host para poder instalar los RPM con yum
+        key: http://materials.example.com/yum/repository/RPM-GPG-KEY-example
+        state: present
+
+    - name: Ensure Example Repo exists
+      ansible.builtin.yum_repository:
+        file: example # nombre del archivo de repositorio
+        name: example-internal # Nombre interno del repositorio en el archivo
+        description: Example Inc. Internal YUM/DNF repo
+        baseurl: http://materials.example.com/yum/repository/
+        enabled: true
+        gpgcheck: true # Revision de llaves GPG
+        state: present
+# ------------
+# EJEMPLO COMPLETO MOSTRAT FACTS DE PAQUETES, DECLARAR YUM REPOS, INSTALL GPG KEY E INSTALAR PAQUETE
+---
+- name: Repository Configuration
+  hosts: all
+  vars:
+    custom_pkg: simple-agent
+  tasks:
+    - name: Gather Package Facts
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Show Package Facts for the custom package
+      ansible.builtin.debug:
+        var: ansible_facts['packages'][custom_pkg]
+      when: custom_pkg in ansible_facts['packages']
+
+    - name: Ensure Example Repo exists
+      ansible.builtin.yum_repository:
+        name: example-internal
+        description: Example Inc. Internal YUM repo
+        file: example
+        baseurl: http://materials.example.com/yum/repository/
+        gpgcheck: true
+
+    - name: Ensure Repo RPM Key is Installed
+      ansible.builtin.rpm_key:
+        key: http://materials.example.com/yum/repository/RPM-GPG-KEY-example
+        state: present
+
+    - name: Install Example package
+      ansible.builtin.dnf:
+        name: "{{ custom_pkg }}"
+        state: present
+
+    - name: Gather Package Facts
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Show Package Facts for the custom package
+      ansible.builtin.debug:
+        var: ansible_facts['packages'][custom_pkg]
+      when: custom_pkg in ansible_facts['packages']
+#-
+#####################################
+# Administrar usuarios y autenticacion
+#####################################
+
+- name: Create devops_user if missing, make sure is member of correct groups
+  ansible.builtin.user:
+    name: devops_user
+    shell: /bin/bash # Establece el shell que tendra el usuario
+    groups: sys_admins, developers # Cuando tiene "append" agrega los grupos al usuario, si no lo tiene sobreescribe los que tenga
+    # group: admin  Este es e grupo principal del usuario
+    append: true
+
+- name: Create an SSH key for user1
+  ansible.builtin.user:
+    name: user1
+    generate_ssh_key: true # Parametro para generar
+    ssh_key_bits: 2048 # Numero de bits
+    ssh_key_file: .ssh/id_my_rsa # Archivo de la llave privada
+
+- name: Verify that the auditors group exists
+  ansible.builtin.group: # Modulo para administracion de grupos
+    name: auditors
+    state: present
+# ------
+- name: Copy host keys to remote servers
+  ansible.builtin.known_hosts:
+    path: /etc/ssh/ssh_known_hosts # Ruta al archivo a editar, si no existe lo crea.
+    name: servera.lab.example.com # Especifica el nombre del host que se agrega o quita.
+    key: servera.lab.example.com,172.25.250.10 ssh-rsa ASDeararAIUHI324324 # Es la llave del host en string con un formato especifico
+# <hostname[,IP]> ssh-rsa <pubkey> para RSA llave publica (/etc/ssh/ssh_host_rsa_key.pub)
+# <hostname[,IP]> ssh-ed25519 <pubkey> para ED25519 llave (/etc/ssh/ssh_host_ed25519_key.pub)
+
+- name: Copy host keys to remote servers using lookup
+  ansible.builtin.known_hosts:
+    path: /etc/ssh/ssh_known_hosts
+    name: serverb
+    key: "{{ lookup('ansible.builtin.file', 'pubkeys/serverb') }}"
+
+# -------
+---
+- name: Configure /etc/ssh/ssh_known_hosts files
+  hosts: all
+
+  tasks:
+    - name: Collect RSA keys
+      ansible.builtin.slurp:
+        src: /etc/ssh/ssh_host_rsa_key.pub
+      register: rsa_host_keys
+
+    - name: Collect Ed25519 keys
+      ansible.builtin.slurp:
+        src: /etc/ssh/ssh_host_ed25519_key.pub
+      register: ed25519_host_keys
+
+    - name: Deploy known_hosts
+      ansible.builtin.known_hosts:
+        path: /etc/ssh/ssh_known_hosts
+        name: "{{ item[0] }}" 1
+        key: "{{ hostvars[ item[0] ]['ansible_facts']['fqdn'] }} {{ hostvars[ item[0] ][ item[1] ]['content'] | b64decode | trim }}" 2
+        state: present
+      with_nested:
+        - "{{ ansible_play_hosts }}" 3
+        - [ 'rsa_host_keys', 'ed25519_host_keys' ] 

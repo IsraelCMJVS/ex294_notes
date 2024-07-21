@@ -1,0 +1,469 @@
+---
+###########################
+## PLAYS DE EJEMPLO CON INFORMACION Y DETALLES DE CADA UNO
+###########################
+- name: Ejemplos de ansible.builtin.debug
+  hosts: all
+  tasks:
+    - name: Display free memory
+      ansible.builtin.debug:
+        msg: "Free memory for this system is {{ ansible_facts['memfree_mb'] }}"
+
+    - name: Display the "output" variable
+      ansible.builtin.debug:
+        var: output
+        verbosity: 2 # Valor de verbosidad para debugear la variable
+################
+- name: Ejemplos de handlers
+  hosts: all
+  gather_facts: false # False quita el gather de los ansible_facts al inicio del playbook
+
+  tasks:
+    - name: copy demo.example.conf configuration template
+      ansible.builtin.template: # Info del modulo**
+        src: /var/lib/templates/demo.example.conf.template # Origen
+        dest: /etc/httpd/conf.d/demo.example.conf # Destino
+      notify: # Parametro para notificar al handler al finalizar el task
+        - restart apache
+        - restart mysql
+
+  handlers:
+    - name: restart apache # Definicion de handlers para reiniciar el servicio
+      ansible.builtin.service: # Modulo para acciones a los servicios del sistema
+        name: httpd
+        state: restarted
+
+    - name: restart mysql
+      ansible.builtin.service:
+        name: mariadb
+        state: restarted
+---
+- name: Ejemplo de handler con loop
+  hosts: webapp
+  vars:
+    packages:
+      - nginx
+      - php-fpm
+      - firewalld
+    web_service: nginx
+    app_service: php-fpm
+    firewall_service: firewalld
+    firewall_service_rules:
+      - http
+    web_config_src: files/nginx.conf.standard
+    web_config_dst: /etc/nginx/nginx.conf
+    app_config_src: files/php-fpm.conf.standard
+    app_config_dst: /etc/php-fpm.conf
+
+  tasks:
+    - name: "{{ packages }} packages are installed"
+      ansible.builtin.dnf:
+        name: "{{ packages }}"
+        state: present
+
+    - name: Make sure services are running
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - "{{ web_service }}"
+        - "{{ app_service }}"
+        - "{{ firewall_service }}"
+
+    - name: Allow services through the firewall
+      ansible.posix.firewalld:
+        service: "{{ item }}"
+        state: enabled
+        immediate: true
+        permanent: true
+      loop: "{{ firewall_service_rules }}"
+
+    - name: The {{ web_config_dst }} file has been deployed
+      ansible.builtin.copy:
+        src: "{{ web_config_src }}"
+        dest: "{{ web_config_dst }}"
+        mode: "0644"
+      notify:
+        - restart web service
+
+    - name: The {{ app_config_dst }} file has been deployed
+      ansible.builtin.copy:
+        src: "{{ app_config_src }}"
+        dest: "{{ app_config_dst }}"
+        mode: "0644"
+      notify:
+        - restart app service
+
+  handlers:
+    - name: restart web service
+      ansible.builtin.service:
+        name: "{{ web_service }}"
+        state: restarted
+
+    - name: restart app service
+      ansible.builtin.service:
+        name: "{{ app_service }}"
+        state: restarted
+
+######################
+- name: Ejemplos de manejo de errores
+  hosts: all
+  force_handlers: true
+  vars:
+    eg: eg
+  tasks:
+    - name: Run user creation script
+      ansible.builtin.shell: /usr/local/bin/create_users.sh
+      register: command_result
+      failed_when: "'Password missing' in command_result.stdout"
+    # ----------
+    - name: Run user creation script
+      ansible.builtin.shell: /usr/local/bin/create_users.sh
+      register: command_result
+      ignore_errors: true
+
+    - name: Report script failure
+      ansible.builtin.fail:
+        msg: "The password is missing in the output"
+      when: "'Password missing' in command_result.stdout"
+    # ----------
+    - ansible.builtin.shell:
+        cmd: /usr/local/bin/upgrade-database
+      register: command_result
+      changed_when: "'Success' in command_result.stdout"
+      notify:
+        - restart_database
+    # ---------
+
+    - name: Upgrade DB
+      block:
+        - name: upgrade the database
+          ansible.builtin.shell:
+            cmd: /usr/local/lib/upgrade-database
+      rescue:
+        - name: revert the database upgrade
+          ansible.builtin.shell:
+            cmd: /usr/local/lib/revert-database
+      always:
+        - name: always restart the database
+          ansible.builtin.service:
+            name: mariadb
+            state: restarted
+    # -----------
+
+    - ansible.builtin.uri:
+        url: http://api.myapp.example.com # Hace una peticion a la url api
+        return_content: true # establece que devuelva el contenido
+      register: apiresponse # Lo guarda en una variable
+
+    - ansible.builtin.fail:
+        msg: "version was not provided"
+      when: "'version' not in apiresponse.content" # Condicion para el error
+
+    # ---------
+    - ansible.builtin.script: scripts/check_free_memory --min 2G # Modulo script, ejecuta un script en los hosts y detiene el play si falla
+
+    # ---------
+    - name: Check if /var/run/app.lock exists
+      ansible.builtin.stat: # Modulo STAT, verifica si un archivo existe
+        path: /var/run/app.lock
+      register: lock
+
+    - name: Fail if the application is running
+      ansible.builtin.fail: # Modulo fail, detiene el play si se cumple la condicion
+      when: lock['stat']['exists'] # Condicion accediendo a la variable
+
+    #EJEMPLO COMPLETO DE CONTROL DE ERRORES Y CONDICIONES CON LOOP Y WHILE
+    #########
+    #Fail fast message
+    - name: Show failed system requirements message
+      ansible.builtin.fail:
+        msg: "The {{ inventory_hostname }} did not meet minimum reqs."
+      when: >
+        ansible_facts['memtotal_mb'] < min_ram_mb or
+        ansible_facts['distribution'] != "RedHat"
+
+    #Install all packages
+    - name: Ensure required packages are present
+      ansible.builtin.dnf:
+        name: "{{ packages }}"
+        state: latest
+
+    #Enable and start services
+    - name: Ensure services are started and enabled
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop: "{{ services }}"
+
+    #Block of config tasks
+    - name: Setting up the SSL cert directory and config files
+      block:
+        - name: Create SSL cert directory
+          ansible.builtin.file:
+            path: "{{ ssl_cert_dir }}"
+            state: directory
+
+        - name: Copy config files
+          ansible.builtin.copy:
+            src: "{{ item['src'] }}"
+            dest: "{{ item['dest'] }}"
+          loop: "{{ web_config_files }}"
+          notify: Restart web service
+
+      rescue:
+        - name: Configuration error message
+          ansible.builtin.debug:
+            msg: >
+              One or more of the configuration
+              changes failed, but the web service
+              is still active.
+
+    #Configure the firewall
+    - name: Ensure web server ports are open
+      ansible.posix.firewalld:
+        service: "{{ item }}"
+        immediate: true
+        permanent: true
+        state: enabled
+      loop:
+        - http
+        - https
+
+  #Add handlers
+  handlers:
+    - name: Restart web service
+      ansible.builtin.service:
+        name: "{{ web_service }}"
+        state: restarted
+########################
+---
+- name: Ejemplos con el modulo file, copy, fetch, blockinfile, lineinfile
+  hosts: all
+  vars:
+    eg: eg
+  tasks:
+    - name: Touch a file and set permissions
+      ansible.builtin.file:
+        path: /path/to/file
+        owner: user1
+        group: group1
+        mode: 0640
+        state: touch
+    - name: SELinux type is set to samba_share_t
+      ansible.builtin.file:
+        path: /path/to/samba_file
+        setype: samba_share_t
+    # -------------
+    - name: Fetch the /var/log/secure log file from managed hosts
+      ansible.builtin.fetch:
+        src: /var/log/secure
+        dest: secure-backups
+
+    - name: Ensure the /home/devops/files directory exists
+      ansible.builtin.file:
+        path: /home/devops/files
+        state: directory
+        owner: devops
+        group: devops
+        mode: 0775
+        setype: _default
+
+    - name: Add a single line of text to a file
+      ansible.builtin.lineinfile:
+        path: /home/devops/files/users.txt
+        line: This line was added by the lineinfile module
+        state: present
+        create: true
+        owner: devops
+        group: devops
+        mode: 0664
+
+    - name: Copy a file to managed hosts and set ownership and permissions
+      ansible.builtin.copy:
+        src: system
+        dest: /home/devops/files/
+        owner: devops
+        group: devops
+        mode: 0664
+
+    - name: Add a block of text to an existing file
+      ansible.builtin.blockinfile:
+        path: /home/devops/files/users.txt
+        block: |
+          This block of text consists of two lines.
+          They have been added by the blockinfile module.
+        state: present
+###################
+---
+- name: Ejemplos del uso de plantillas con jinja y modulos stat, file, copy
+  hosts: all
+  remote_user: devops
+  become: true
+  tasks:
+    - name: Configure a custom /etc/motd
+      ansible.builtin.template:
+        src: templates/motd.j2
+        dest: /etc/motd
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: Check file exists
+      ansible.builtin.stat:
+        path: /etc/motd
+      register: motd
+
+    - name: Display stat results
+      ansible.builtin.debug:
+        var: motd
+
+    - name: Copy custom /etc/issue file
+      ansible.builtin.copy:
+        src: files/issue
+        dest: /etc/issue
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: Ensure /etc/issue.net is a symlink to /etc/issue
+      ansible.builtin.file:
+        src: /etc/issue
+        dest: /etc/issue.net
+        state: link
+        owner: root
+        group: root
+        force: true
+############
+---
+- name: Ejemplos de multiples plays con playbooks importados.
+  hosts: localhost
+  tasks:
+    - name: Display a message
+      ansible.builtin.debug:
+        msg: Play 1
+
+- name: Import Playbook # Importacion de un playbook externo como play de este.
+  ansible.builtin.import_playbook: play2.yml
+
+- name: Install web server # Importacion de archivo de tasks a un play
+  hosts: webservers
+  tasks:
+    - name: Import webserver tasks
+      ansible.builtin.import_tasks: webserver_tasks.yml
+
+- name: Install web server
+  hosts: webservers
+  tasks:
+    - name: Include webserver tasks
+      ansible.builtin.include_tasks: webserver_tasks.yml
+##########################3
+- name: Ejecutar y declarar roles en un task
+  hosts: remote.example.com
+  tasks:
+    - name: A normal task
+      ansible.builtin.debug:
+        msg: "first task"
+    - name: A task to import role2 here
+      ansible.builtin.import_role: # Modulo para importacion de roles ( tambien se puede usar include.)
+        name: role2
+#----
+- name: A play that only has roles
+  hosts: remote.example.com
+  roles: # Se puede declarar una lista de roles a invocar en un play.
+    - role: role1
+    - role: role2
+# -----
+- name: A play that runs the second role with variables
+  hosts: remote.example.com
+  roles:
+    - role: role1
+    - role: role2
+      var1: val1
+      var2: val2
+# ----------
+- name: Play to illustrate order of execution
+  hosts: remote.example.com
+  pre_tasks: # Tasks que se ejecutan antes que todo
+    - name: This task runs first
+      ansible.builtin.debug:
+        msg: This task is in pre_tasks
+      notify: my handler
+      changed_when: true
+  roles: # Declaracion de roles, se ejecutan antes de tasks
+    - role: role1
+  tasks: # Tasks normales con su ejecucion
+    - name: This task runs after the roles
+      ansible.builtin.debug:
+        msg: This task is in tasks
+      notify: my handler # Manda a llamar a un trigger de handler.
+      changed_when: true
+  post_tasks: # Tasks que se ejecutan al final de todo.
+    - name: This task runs last
+      ansible.builtin.debug:
+        msg: This task is in post_tasks
+      notify: my handler
+      changed_when: true
+  handlers: # Declaracion de handlers.
+    - name: my handler
+      ansible.builtin.debug:
+        msg: Running my handler
+# -----------
+---
+- name: EJEMPLO DE USO DE ROL CON CREACION Y MODIFICACION DE USUARIO
+  hosts: devservers
+  vars:
+    default_prompt: '[\u on \h in \W dir]\$ ' # student2 on host1 in ~ dir
+  pre_tasks:
+    - name: Ensure test user does not exist
+      ansible.builtin.user:
+        name: student2
+        state: absent # Elimina el usuario
+        force: true
+        remove: true
+
+  roles:
+    - student.bash_env
+
+  post_tasks:
+    - name: Create the test user
+      ansible.builtin.user: # modulo para usuarios
+        name: student2
+        state: present # Crea el usuario
+        password: "{{ 'redhat' | password_hash }}" # Metodo para cifrar con sha256 la contraseña
+# -------
+- name: Time Synchronization Play con role del sistema RHEL
+  hosts: webservers
+  vars:
+    timesync_ntp_servers:
+      - hostname: 0.rhel.pool.ntp.org
+        iburst: yes
+      - hostname: 1.rhel.pool.ntp.org
+        iburst: yes
+      - hostname: 2.rhel.pool.ntp.org
+        iburst: yes
+
+  roles:
+    - redhat.rhel_system_roles.timesync
+# ----
+---
+- name: test
+  hosts: all
+  tasks:
+    - name: Apply SELinux role
+      block:
+        - include_role:
+          name: redhat.rhel_system_roles.selinux
+      rescue:
+        - name: Check for failure for other reasons than required reboot
+          ansible.builtin.fail:
+          when: not selinux_reboot_required
+
+        - name: Restart managed host
+          ansible.builtin.reboot:
+
+        - name: Reapply SELinux role to complete changes
+          include_role:
+            name: redhat.rhel_system_roles.selinux

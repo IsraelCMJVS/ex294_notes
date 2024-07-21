@@ -1,0 +1,54 @@
+{# Ejemplo de sshd_config #}
+# {{ ansible_managed }}
+# DO NOT MAKE LOCAL MODIFICATIONS TO THIS FILE BECAUSE THEY WILL BE LOST
+
+Port {{ ssh_port }}
+ListenAddress {{ ansible_facts['default_ipv4']['address'] }}
+
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+
+SyslogFacility AUTHPRIV
+
+PermitRootLogin {{ root_allowed }}
+AllowGroups {{ groups_allowed }}
+
+AuthorizedKeysFile /etc/.rht_authorized_keys .ssh/authorized_keys
+
+PasswordAuthentication {{ passwords_allowed }}
+
+ChallengeResponseAuthentication no
+
+GSSAPIAuthentication yes
+GSSAPICleanupCredentials no
+
+UsePAM yes
+
+X11Forwarding yes
+UsePrivilegeSeparation sandbox
+
+AcceptEnv LANG LC_CTYPE LC_NUMERIC LC_TIME LC_COLLATE LC_MONETARY LC_MESSAGES
+AcceptEnv LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT
+AcceptEnv LC_IDENTIFICATION LC_ALL LANGUAGE
+AcceptEnv XMODIFIERS
+
+Subsystem sftp	/usr/libexec/openssh/sftp-server
+
+{# EJEMPLO DE ESTRUCTURAS DE CONTROL #}
+{# for statement #}
+{% for myuser in users if not myuser == "root" %}
+User number {{ loop.index }} - {{ myuser }}
+{% endfor %}
+
+{% for myhost in groups['myhosts'] %}
+{{ myhost }}
+{% endfor %}
+
+{% for user in users %}
+    {{ user }}
+{% endfor %}
+
+{% if finished %}
+{{ result }}
+{% endif %}
